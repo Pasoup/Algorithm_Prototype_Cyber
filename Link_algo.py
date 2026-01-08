@@ -1,7 +1,7 @@
 import re, ssl, socket, whois, datetime, Levenshtein
 from urllib.parse import urlparse
 from datetime import datetime,UTC,timezone
-
+import requests
 class  ScamDetector:
     def __init__(self):
         self.target_brands = ["google", "facebook", "amazon", "paypal", "apple", "netflix", "scb"]
@@ -91,11 +91,51 @@ class  ScamDetector:
             return age.days
         except Exception as e:
             return f"Error: {str(e)}"
+        
+
+
+        #---checking for redirect
+    def Redirect_analyze(self, url):
+        try:
+            response = requests.get(url, allow_redirects=True, stream=True, timeout=5)
+            history = response.history
+            final_url = response.url
+            hops = len(history)
+            
+            risk_score = 0
+            details = []
+            
+            # Check for hops
+            if hops == 0:
+                return 0, "No redirects"
+            
+            if hops > 3:
+                risk_score += 10
+                details.append(f"High redirect count ({hops} hops)")
+            else:
+                details.append(f"{hops} redirect(s)")
+
+            initial_domain = self.get_domain_from_url(url)
+            final_domain = self.get_domain_from_url(final_url)
+
+            if initial_domain != final_domain:
+                # We allow legitimate sub-domain redirects
+                if final_domain not in initial_domain and initial_domain not in final_domain:
+                    risk_score += 10
+                    details.append(f"Destination mismatch ({initial_domain} -> {final_domain})")
+            
+            risk_message = "; ".join(details)
+            return risk_score, risk_message
+        except requests.exceptions.RequestException as e:
+            return 0, "Connection Failed during redirect check"
 
     def analyze_url_algo(self,url):
         risk_score = 0
         SSL_riskScore, SSL_riskMessage = self.SSL_analyze(url)
         risk_score += SSL_riskScore
+
+        redirect_score, redirect_msg = self.Redirect_analyze(url)
+        risk_score += redirect_score
     #calculatnig only for days -----------
         age_result = self.get_creation_date(url)
         age_riskMessage = ""
@@ -117,10 +157,11 @@ class  ScamDetector:
             # can't verify age, give 10 suspecious meter
             age_riskMessage = "Can't verify age"
             risk_score += 10
-        RiskFactor = [age_riskMessage,SSL_riskMessage]
-
+        RiskFactor = [age_riskMessage,SSL_riskMessage,redirect_msg]
 
 #-------------------- this is where we calculate risk to give out
+
+        risk_score = min(risk_score, 100)
         if risk_score >= 80:
             return f"HIGH THREAT ({risk_score}% Risk)",RiskFactor
         elif risk_score >= 40:
