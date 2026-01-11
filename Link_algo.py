@@ -4,7 +4,7 @@ from datetime import datetime,UTC,timezone
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-
+from bs4 import BeautifulSoup
 app = FastAPI()
 
 app.add_middleware(
@@ -177,7 +177,74 @@ class  ScamDetector:
             return risk_score, risk_message
         except requests.exceptions.RequestException as e:
             return 0, "Connection Failed during redirect check"
+        
+    def fetch_page_text(self,url):
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+            
+            response = requests.get(url, headers=headers, timeout=3)
+            
+            if response.status_code != 200:
+                return "" 
+                
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            clean_text = soup.get_text(separator=' ').lower()
+            
+            return clean_text
 
+        except Exception as e:
+            print(f"Error fetching text: {e}")
+            return ""
+    
+#--------checking for TLD-----------
+    def checking_tld(self,url, page_text):
+        risk_score = 0
+        reasons = []
+        domain = url.split("//")[-1].split("/")[0].lower()
+
+        gambling_tlds = [
+            ".cc", ".vip", ".pro", ".asia", ".club", 
+            ".fun", ".live", ".bet", ".game", ".win", ".me"
+        ]
+        
+        for tld in gambling_tlds:
+            if domain.endswith(tld):
+                risk_score += 30
+                reasons.append(f"Suspicious TLD ({tld}) common in gambling")
+
+        bad_domain_patterns = [
+            "ufa", "pg", "168", "888", "777", "joker", 
+            "slot", "auto", "wallet", "bet", "xo"
+        ]
+        
+        matches = [pat for pat in bad_domain_patterns if pat in domain]
+        if matches:
+            risk_score += 50
+            reasons.append(f"Domain contains gambling network keywords: {matches}")
+
+        if page_text:
+            thai_keywords = [
+                "สล็อต", "บาคาร่า", "คาสิโน", "ฝากถอน", 
+                "ไม่มีขั้นต่ำ", "เว็บตรง", "เครดิตฟรี", "แทงบอล"
+            ]
+            english_keywords = [
+                "casino", "sportsbook", "betting", "wager", 
+                "jackpot", "slots", "roulette", "blackjack", 
+                "poker", "deposit bonus", "free spins", "live dealer",
+                "odds", "payout", "rollover", "welcome bonus"
+            ]
+            all_keywords = thai_keywords + english_keywords
+
+            found_keywords = [word for word in all_keywords if word in page_text]
+            if len(found_keywords) >= 3:
+                risk_score += 30
+                reasons.append(f"Found gambling keywords: {found_keywords}")
+
+
+        return min(risk_score, 100),reasons
     def analyze_url_algo(self,url):
         risk_score = 0
         SSL_riskScore, SSL_riskMessage = self.SSL_analyze(url)
@@ -185,7 +252,12 @@ class  ScamDetector:
 
         redirect_score, redirect_msg = self.Redirect_analyze(url)
         risk_score += redirect_score
+
+        page_contect = self.fetch_page_text(url)
+        tld_score,tld_riskmsg = self.checking_tld(url,page_contect)
+        risk_score += tld_score
     #calculatnig only for days -----------
+    
         age_result = self.get_creation_date(url)
         ssl_age = self.age_alternative(url)
         age_riskMessage = ""
@@ -224,7 +296,7 @@ class  ScamDetector:
             # can't verify age, give 10 suspecious meter
             age_riskMessage = "Can't verify age"
             risk_score += 10
-        RiskFactor = [age_riskMessage,SSL_riskMessage,redirect_msg]
+        RiskFactor = [age_riskMessage,SSL_riskMessage,redirect_msg,tld_riskmsg]
 
 #-------------------- this is where we calculate risk to give out
 
@@ -242,11 +314,9 @@ if __name__ == "__main__":
     checker = ScamDetector()
     
     test_urls = [
-        "https://www.google.com",
-        "http://paypa1.com",  
-        "https://amazon.com.security-check.xyz", 
-        "apple.com",
-        "vercel.com"
+        "https://www.ufabet168.menu/",
+        "https://ufabet.date/",
+
     ]
 
     for link in test_urls:
