@@ -3,8 +3,21 @@ from urllib.parse import urlparse
 from datetime import datetime,UTC,timezone
 from fastapi import FastAPI
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8000",
+        "http://127.0.0.1",
+        "chrome-extension://kbbpbmflbdfgiicegcefhgdocoeodcbh"
+        ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class LinkRequest(BaseModel):
     url:str
@@ -66,6 +79,31 @@ class  ScamDetector:
             #Unknown error be assess as risky
             print(f"ERROR: {e}")
             return 30, "Unknown Error"
+        
+#----------------------------- Check age from first SSL certificate  ------------------------------------------------
+    def age_alternative(self,domain):
+        url = f"https://crt.sh/?q={domain}&output=json"
+        ua = 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.1'
+        try:
+            req = requests.get(url, headers={'User-Agent': ua},timeout=10)
+            if req.ok:
+                res = req.json()
+                #If no result return None
+                if not res:
+                    return None
+                dates = []
+                for SSL in res:
+                    date_str = SSL.get('entry_timestamp')
+                    dt = datetime.strptime(date_str.split('T')[0],"%Y-%m-%d").replace(tzinfo=timezone.utc)
+                    dates.append(dt)
+                first_cert = min(dates)
+                age = (datetime.now(UTC) - first_cert).days
+                return age
+        except Exception as e:
+            error = f"Encountered unexpected error : {e}"
+            print(error)
+            return error
+                    
 
     def get_domain_from_url(self, url):
         #extract keywords from url
@@ -149,6 +187,7 @@ class  ScamDetector:
         risk_score += redirect_score
     #calculatnig only for days -----------
         age_result = self.get_creation_date(url)
+        ssl_age = self.age_alternative(url)
         age_riskMessage = ""
         if isinstance(age_result, int):
             days_created = age_result
@@ -159,6 +198,23 @@ class  ScamDetector:
                 risk_score += 10 
                 age_riskMessage = "Domain is recent"
             elif days_created < 365:
+                risk_score += 5 
+                age_riskMessage = "Domain is established"
+            else:
+                age_riskMessage = "Domain is ancient"
+                risk_score += 0  
+        elif isinstance(ssl_age, int):
+            #Because we can't get the age directly
+            #We check the first SSLCertificate of 
+            #the domain, since server would need
+            #certificate to be flag as 'safe'
+            if ssl_age < 30:
+                risk_score += 30  
+                age_riskMessage = "Domain is extremely new!"
+            elif ssl_age < 100:
+                risk_score += 10 
+                age_riskMessage = "Domain is recent"
+            elif ssl_age < 365:
                 risk_score += 5 
                 age_riskMessage = "Domain is established"
             else:
