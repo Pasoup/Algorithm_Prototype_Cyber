@@ -1,8 +1,20 @@
-import re, ssl, socket, whois, datetime, Levenshtein
+import ssl, socket, whois, datetime, requests
 from urllib.parse import urlparse
 from datetime import datetime,UTC,timezone
+from fastapi import FastAPI
+from pydantic import BaseModel
 from bs4 import BeautifulSoup
-import requests
+app = FastAPI()
+
+class LinkRequest(BaseModel):
+    url:str
+
+@app.post("/checkURL")
+def checkURL(request:LinkRequest):
+    checker = ScamDetector()
+    RiskLevel,RiskFactor = checker.analyze_url_algo(request.url)
+    return {"RiskLevel":RiskLevel,"RiskFactor":RiskFactor}
+
 class  ScamDetector:
     def __init__(self):
         self.target_brands = ["google", "facebook", "amazon", "paypal", "apple", "netflix", "scb"]
@@ -37,23 +49,23 @@ class  ScamDetector:
         except ssl.SSLCertVerificationError as e:
             #This is bad, SSLCert expired which could mean phishing risk, data exposure, etc.
             print(f"SSL ERROR: The certificate is invalid! ({e.verify_message})")
-            return 100, "SSL certificate expired"
+            return 30, "SSL certificate expired"
         except socket.gaierror:
             #Could not find server address, could be phishing attempt
             print(f"DNS ERROR: Could not find server {root}")
-            return 100, "Server does not exist"
+            return 30, "Server does not exist"
         except socket.timeout:
             #The server is either slow or blocked, doesn't necessary mean it's dangerous
             #Perhaps it's some company private server which weren't meant for public
             print("Timeout Error (Server slow/blocked)")
-            return 50, "Server could be slow or blocked"
+            return 15, "Server could be slow or blocked"
         except ConnectionRefusedError:
             print("Connection refused (Port close)")
-            return 80, "Connection refused"
+            return 24, "Connection refused"
         except Exception as e:
             #Unknown error be assess as risky
             print(f"ERROR: {e}")
-            return 100, "Unknown Error"
+            return 30, "Unknown Error"
 
     def get_domain_from_url(self, url):
         #extract keywords from url
@@ -92,8 +104,6 @@ class  ScamDetector:
             return age.days
         except Exception as e:
             return f"Error: {str(e)}"
-        
-
 
         #---checking for redirect
     def Redirect_analyze(self, url):
@@ -191,9 +201,9 @@ class  ScamDetector:
             all_keywords = thai_keywords + english_keywords
 
             found_keywords = [word for word in all_keywords if word in page_text]
-            if len(found_keywords) >= 2:
+            if len(found_keywords) >= 3:
                 risk_score += 30
-                reasons.append(f"Found Thai gambling keywords: {found_keywords}")
+                reasons.append(f"Found gambling keywords: {found_keywords}")
 
 
         return min(risk_score, 100),reasons
